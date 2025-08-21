@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Catch the Stars 1.0 ✨</title>
+  <style>
+    :root{
+      --bg:#0b0f2a; --panel:#151a3a; --text:#eaf0ff; --accent:#7aa2ff; --muted:#9aa4c7;
+      --good:#5ce1a6; --bad:#ff6b6b; --gold:#ffd166; --purple:#9b5de5;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial}
+    body{display:grid;place-items:center;background:linear-gradient(180deg,#000010 0%,#0a0a25 40%,#020212 100%);color:var(--text)}
+    .wrap{width:min(1120px,96vw);display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start}
+    canvas{width:100%;height:600px;background:radial-gradient(circle at center,#0f1028 0%,#000010 100%);border:1px solid rgba(255,255,255,.1);border-radius:18px;box-shadow:0 20px 40px rgba(0,0,0,.35)}
+    aside{background:var(--panel);border:1px solid rgba(255,255,255,.08);padding:14px;border-radius:18px;box-shadow:0 12px 30px rgba(0,0,0,.25)}
+    h1{font-weight:800;letter-spacing:.3px;font-size:22px;margin:0 0 6px}
+    .sub{font-size:12px;color:var(--muted);margin-bottom:10px}
+    .stat{background:rgba(255,255,255,.04);padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.07);margin-bottom:6px}
+    .stat h3{font-size:12px;color:var(--muted);margin:0 0 4px}
+    .stat .v{font-size:18px;font-weight:700}
+    button{cursor:pointer;border-radius:12px;padding:9px 12px;border:1px solid rgba(255,255,255,.12);color:var(--text);font-weight:600;margin:4px;transition:.2s}
+    button:hover{transform:translateY(-2px) scale(1.05);box-shadow:0 0 12px rgba(255,255,255,.25)}
+    button.primary{background:linear-gradient(180deg,var(--accent),#4b7cff);border-color:rgba(0,0,0,.2);color:#fff}
+    button.blackhole{background:linear-gradient(180deg,var(--purple),#5e2e91);border-color:#2d174a;color:#fff}
+    button.evolve{background:linear-gradient(180deg,var(--good),#2e8b57);border-color:#0b3d2e;color:#fff}
+    button.rebirth{background:linear-gradient(180deg,#ffd166,#e29500);border-color:#7a4c00;color:#000;font-weight:800}
+    button.boost{background:linear-gradient(180deg,#ff6b6b,#c92a2a);border-color:#5a1a1a;color:#fff;font-weight:800}
+    .hint{font-size:11px;color:var(--muted);margin-top:6px;text-align:center}
+    #status{font-family:Impact,Haettenschweiler,'Arial Black',sans-serif;letter-spacing:.3px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="gameCanvas" width="720" height="600"></canvas>
+    <aside>
+      <h1>Catch the Stars 1.0 ✨</h1>
+      <div class="sub">Objetivo 1: pegue <b>20 estrelas</b> ⭐ para desbloquear <b>Boost</b> e <b>Rebirth</b>. Obstáculos aparecem a partir de <b>50 estrelas</b>.</div>
+
+      <div class="stat"><h3>Pontuação</h3><div class="v" id="score">0</div></div>
+      <div class="stat"><h3>Status</h3><div class="v" id="status">Aguardando...</div></div>
+      <div class="stat"><h3>Buracos Negros 🌀</h3><div class="v" id="blackholes">0</div></div>
+      <div class="stat"><h3>Rebirths</h3><div class="v" id="rebirths">0</div></div>
+
+      <button class="primary" onclick="startGame()">▶ Iniciar</button>
+      <button onclick="resetGame()">🔄 Resetar</button>
+      <button class="blackhole" onclick="buyBlackhole()">🌀 Buraco Negro (3⭐)</button>
+      <button class="evolve" id="evolveBtn" style="display:none" onclick="evolvePlayer()">⚡ Evoluir</button>
+      <button class="rebirth" id="rebirthBtn" onclick="rebirth()" disabled>🔄 Rebirth</button>
+      <button class="boost" id="boostBtn" onclick="activateBoost()" disabled>🚀 Boost (x8 por 5s)</button>
+
+      <div class="hint">Controles: WASD / Setas • Timer de boost aparece em <b>Impact</b> sobre o player</div>
+    </aside>
+  </div>
+
+<script>
+// ========= Estado / Constantes =========
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const WORLD = { running:false, objective:20 };
+
+const player = { x:360, y:300, size:18, speed:4, level:1, rebirths:0, boosted:false };
+const shadowling = { x:80, y:80, size:26, speed:2.1, eyeBlink:0 };
+
+let stars = [];
+let obstacles = [];
+let spawnedObstacles = false;
+let score = 0;
+let blackholes = 0;
+let keys = {};
+
+// Fundo estrelado fixo
+const bgDots = Array.from({length:140},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:Math.random()*1.3+0.2}))
+
+// ========= SFX 8-bit (WebAudio) =========
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const actx = new AudioCtx();
+function sfx(type){
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.connect(g); g.connect(actx.destination);
+  let f1=440,f2=220,dur=0.12,typeWave='square';
+  if(type==='star'){ f1=880; f2=1320; dur=0.09; typeWave='square'; }
+  if(type==='boost'){ f1=240; f2=960; dur=0.25; typeWave='sawtooth'; }
+  if(type==='rebirth'){ f1=330; f2=660; dur=0.22; typeWave='triangle'; }
+  if(type==='hit'){ f1=160; f2=80; dur=0.18; typeWave='square'; }
+  o.type = typeWave; o.frequency.setValueAtTime(f1, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(f2, actx.currentTime+dur);
+  g.gain.setValueAtTime(0.15, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime+dur);
+  o.start(); o.stop(actx.currentTime+dur);
+}
+
+// ========= Utilidades =========
+function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
+function aabb(ax,ay,aw,ah,bx,by,bw,bh){ return ax<bx+bw && ax+aw>bx && ay<by+bh && ay+ah>by; }
+function computeEvolveCost(level){ // level atual
+  // Lvl1 → 5⭐ + 1🌀; a cada nível +2⭐ e +1🌀
+  return { stars: 5 + (level-1)*2, holes: 1 + (level-1) };
+}
+
+// ========= Spawns =========
+function spawnStar(){
+  stars.push({x:Math.random()*(canvas.width-24)+12, y:Math.random()*(canvas.height-24)+12, size:7});
+}
+function ensureStars(n){ while(stars.length<n) spawnStar(); }
+
+function spawnObstacles(){
+  obstacles = [
+    {x:140,y:110,w:40,h:14},
+    {x:500,y:160,w:18,h:60},
+    {x:260,y:380,w:80,h:16},
+    {x:620,y:300,w:16,h:80},
+    {x:80,y:500,w:100,h:14}
+  ];
+  spawnedObstacles = true;
+  setStatus('🧱 Obstáculos surgiram!');
+}
+
+// ========= UI =========
+function updateUI(){
+  document.getElementById('score').textContent = score;
+  document.getElementById('blackholes').textContent = blackholes;
+  document.getElementById('rebirths').textContent = player.rebirths;
+  const {stars:needS, holes:needH} = computeEvolveCost(player.level);
+  const canEvolve = score>=needS && blackholes>=needH;
+  document.getElementById('evolveBtn').style.display = canEvolve ? 'inline-block' : 'none';
+}
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+function unlockPostObjective(){
+  document.getElementById('boostBtn').disabled = false;
+  document.getElementById('rebirthBtn').disabled = false;
+  setStatus('🚀 Boost e 🔄 Rebirth desbloqueados!');
+}
+
+// ========= Loop =========
+function startGame(){
+  WORLD.running = true;
+  score = 0; blackholes = 0; spawnedObstacles = false; obstacles = []; stars = [];
+  player.x=360; player.y=300; player.size=18; player.level=1; player.speed = 4 + player.rebirths; player.boosted=false;
+  shadowling.x=80; shadowling.y=80; shadowling.speed=2.1;
+  ensureStars(8);
+  document.getElementById('boostBtn').disabled = true;
+  document.getElementById('rebirthBtn').disabled = true;
+  setStatus('Jogando...');
+  updateUI();
+  requestAnimationFrame(tick);
+}
+
+function resetGame(){
+  WORLD.running = false;
+  setStatus('Aguardando...');
+  stars=[]; obstacles=[]; spawnedObstacles=false; score=0; blackholes=0;
+  updateUI();
+  drawFrame();
+}
+
+function buyBlackhole(){
+  if(score>=3){ score-=3; blackholes++; updateUI(); setStatus('🌀 Comprou um Buraco Negro!'); sfx('star'); }
+  else setStatus('Precisa de 3⭐ para comprar 🌀.');
+}
+
+function evolvePlayer(){
+  const {stars:needS, holes:needH} = computeEvolveCost(player.level);
+  if(score>=needS && blackholes>=needH){
+    score-=needS; blackholes-=needH; player.level++; player.speed += 1.2; player.size += 2; updateUI();
+    setStatus(`⚡ Evoluiu para nível ${player.level}! (+Velocidade)`);
+    sfx('star');
+  } else {
+    setStatus(`Precisa de ${needS}⭐ e ${needH}🌀 para evoluir.`);
+  }
+}
+
+function rebirth(){
+  if(document.getElementById('rebirthBtn').disabled) return; // só após objetivo
+  player.rebirths++;
+  sfx('rebirth');
+  setStatus(`🔥 Rebirth! Bônus permanente: +${player.rebirths} Velocidade.`);
+  startGame();
+}
+
+function activateBoost(){
+  if(document.getElementById('boostBtn').disabled) return; // só após objetivo
+  if(player.boosted) return;
+  player.boosted = true; const base = player.speed; player.speed = base*8; sfx('boost');
+  let t = 5; // segundos
+  const timer = setInterval(()=>{
+    t--; if(t<=0){ clearInterval(timer); player.boosted=false; player.speed = base; setStatus('⚡ Boost acabou.'); }
+  },1000);
+}
+
+function tick(){
+  if(!WORLD.running) return;
+  update();
+  drawFrame();
+  requestAnimationFrame(tick);
+}
+
+function update(){
+  // Movimento
+  const sp = player.speed;
+  const up = keys['w']||keys['arrowup'];
+  const down = keys['s']||keys['arrowdown'];
+  const left = keys['a']||keys['arrowleft'];
+  const right = keys['d']||keys['arrowright'];
+  let oldX=player.x, oldY=player.y;
+  if(up) player.y -= sp; if(down) player.y += sp; if(left) player.x -= sp; if(right) player.x += sp;
+  player.x = clamp(player.x,0,canvas.width-player.size);
+  player.y = clamp(player.y,0,canvas.height-player.size);
+
+  // colisão com obstáculos
+  for(const o of obstacles){ if(aabb(player.x,player.y,player.size,player.size,o.x,o.y,o.w,o.h)){ player.x=oldX; player.y=oldY; }}
+
+  // Inimigo persegue
+  shadowling.eyeBlink = (shadowling.eyeBlink+1)%120;
+  if(shadowling.x < player.x) shadowling.x += shadowling.speed; else if(shadowling.x > player.x) shadowling.x -= shadowling.speed;
+  if(shadowling.y < player.y) shadowling.y += shadowling.speed; else if(shadowling.y > player.y) shadowling.y -= shadowling.speed;
+
+  // Coletar estrelas
+  for(let i=stars.length-1;i>=0;i--){
+    const s = stars[i];
+    if(aabb(player.x,player.y,player.size,player.size,s.x-6,s.y-6,12,12)){
+      stars.splice(i,1); score++; updateUI(); sfx('star');
+      if(score===WORLD.objective){ unlockPostObjective(); }
+      if(score>=50 && !spawnedObstacles) spawnObstacles();
+    }
+  }
+  if(Math.random()<0.02) spawnStar();
+
+  // Derrota
+  if(aabb(player.x,player.y,player.size,player.size, shadowling.x,shadowling.y,shadowling.size,shadowling.size)){
+    WORLD.running=false; setStatus('💀 Você foi pego pelo Shadowling!'); sfx('hit');
+  }
+}
+
+// ========= Render =========
+function drawBackground(){
+  ctx.fillStyle = '#000012'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#fff';
+  for(const d of bgDots){ ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.arc(d.x,d.y,d.r,0,Math.PI*2); ctx.fill(); }
+  ctx.globalAlpha = 1;
+}
+
+function drawStarShape(x,y,r){
+  ctx.beginPath();
+  for(let i=0;i<5;i++){
+    const ang = (i*72-90)*Math.PI/180;
+    const px = x + Math.cos(ang)*r;
+    const py = y + Math.sin(ang)*r;
+    if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  }
+  ctx.closePath(); ctx.fill();
+}
+
+function drawShadowling(){
+  ctx.fillStyle = '#ff4444';
+  ctx.fillRect(shadowling.x, shadowling.y, shadowling.size, shadowling.size);
+  if(shadowling.eyeBlink<100){
+    ctx.fillStyle='#fff';
+    ctx.fillRect(shadowling.x+5,shadowling.y+6,5,5);
+    ctx.fillRect(shadowling.x+shadowling.size-10,shadowling.y+6,5,5);
+    ctx.fillStyle='#000';
+    ctx.fillRect(shadowling.x+7,shadowling.y+8,2,2);
+    ctx.fillRect(shadowling.x+shadowling.size-8,shadowling.y+8,2,2);
+  }
+  ctx.fillStyle='#000';
+  ctx.fillRect(shadowling.x+6, shadowling.y+shadowling.size-10, shadowling.size-12, 4);
+}
+
+function drawFrame(){
+  drawBackground();
+  // Obstáculos
+  ctx.fillStyle = '#6c6f93'; obstacles.forEach(o=>ctx.fillRect(o.x,o.y,o.w,o.h));
+
+  // Estrelas coletáveis
+  ctx.fillStyle = '#ffd166'; stars.forEach(s=> drawStarShape(s.x, s.y, s.size));
+
+  // Player (com brilho se boost)
+  if(player.boosted){ ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 18; }
+  ctx.fillStyle = '#7aa2ff'; ctx.fillRect(player.x, player.y, player.size, player.size);
+  ctx.shadowBlur = 0;
+
+  // Timer do boost
+  if(player.boosted){
+    ctx.font = '18px Impact, Haettenschweiler, Arial Black, sans-serif';
+    ctx.fillStyle = '#ffcc66'; ctx.textAlign = 'center';
+    ctx.fillText('BOOST', player.x + player.size/2, player.y - 12);
+  }
+
+  // Antagonista
+  drawShadowling();
+}
+
+// ========= Input =========
+window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; if(actx.state==='suspended') actx.resume(); });
+window.addEventListener('keyup',   e=>{ keys[e.key.toLowerCase()] = false; });
+
+// ========= Pequenos testes (sanity) =========
+(function selfTests(){
+  console.assert(typeof startGame === 'function', 'startGame deve existir');
+  console.assert(typeof resetGame === 'function', 'resetGame deve existir');
+  console.assert(typeof buyBlackhole === 'function', 'buyBlackhole deve existir');
+  console.assert(typeof evolvePlayer === 'function', 'evolvePlayer deve existir');
+  console.assert(typeof rebirth === 'function', 'rebirth deve existir');
+  console.assert(typeof activateBoost === 'function', 'activateBoost deve existir');
+  const c1=computeEvolveCost(1), c2=computeEvolveCost(2), c3=computeEvolveCost(3);
+  console.assert(c1.stars===5 && c1.holes===1,'Lvl1 custo incorreto');
+  console.assert(c2.stars===7 && c2.holes===2,'Lvl2 custo incorreto');
+  console.assert(c3.stars===9 && c3.holes===3,'Lvl3 custo incorreto');
+})();
+</script>
+</body>
+</html>
